@@ -12,9 +12,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, dev ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, dev ]
 
 # Cancel in-progress runs when a new run is triggered for the same branch/PR.
 # This prevents resource conflicts and saves CI minutes.
