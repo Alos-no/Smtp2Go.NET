@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/Docs/">
+    <File Path="README.md" />
+    <File Path="LICENSE" />
+  </Folder>
+  <Folder Name="/Tests/">
+    <Project Path="tests/Smtp2Go.NET.UnitTests/Smtp2Go.NET.UnitTests.csproj" />
+    <Project Path="tests/Smtp2Go.NET.IntegrationTests/Smtp2Go.NET.IntegrationTests.csproj" />
+  </Folder>
+  <Project Path="src/Smtp2Go.NET/Smtp2Go.NET.csproj" />
+</Solution>

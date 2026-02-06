@@ -1,0 +1,110 @@
+# Continuous Integration workflow.
+#
+# This workflow runs on every push and pull request to main branch:
+# 1. Builds the solution using the reusable build workflow
+# 2. Runs unit tests (no network required)
+# 3. Runs integration tests against the live SMTP2GO API (requires secrets)
+#
+# Tests run against .NET 10 (primary target framework).
+# Webhook delivery tests are excluded from CI because they require cloudflared.
+
+name: CI
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+# Cancel in-progress runs when a new run is triggered for the same branch/PR.
+# This prevents resource conflicts and saves CI minutes.
+# Reference: https://docs.github.com/en/actions/using-jobs/using-concurrency
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Restrict default permissions for security
+permissions:
+  contents: read
+
+jobs:
+  # Build the solution using the reusable workflow
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      configuration: Debug
+      upload_artifacts: true
+
+  # Run unit tests (no secrets required)
+  unit-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output-Debug
+
+      - name: Restore execute permissions
+        # upload-artifact/download-artifact strips POSIX execute bits.
+        run: chmod +x ./tests/Smtp2Go.NET.UnitTests/bin/Debug/net10.0/Smtp2Go.NET.UnitTests
+
+      - name: Run unit tests
+        # xUnit v3 test projects are standalone executables — dotnet test does not discover them.
+        run: ./tests/Smtp2Go.NET.UnitTests/bin/Debug/net10.0/Smtp2Go.NET.UnitTests
+
+  # Run integration tests against the live SMTP2GO API.
+  # Webhook delivery tests are excluded because they require cloudflared (not available in CI).
+  # Sandbox and live API tests run with secrets configured as environment variables.
+  integration-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Only run on push to main or when secrets are available (not on fork PRs).
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: build-output-Debug
+
+      - name: Restore execute permissions
+        # upload-artifact/download-artifact strips POSIX execute bits.
+        run: chmod +x ./tests/Smtp2Go.NET.IntegrationTests/bin/Debug/net10.0/Smtp2Go.NET.IntegrationTests
+
+      - name: Run integration tests (excluding webhook delivery)
+        # Exclude webhook delivery tests (require cloudflared + tunnel infrastructure).
+        # xUnit v3 uses -trait- (with trailing dash) to exclude tests by trait.
+        # This excludes tests with [Trait("Category", "Integration.Webhook")].
+        # Sandbox, live API, and webhook management tests all run.
+        run: ./tests/Smtp2Go.NET.IntegrationTests/bin/Debug/net10.0/Smtp2Go.NET.IntegrationTests -trait- "Category=Integration.Webhook"
+        env:
+          # SMTP2GO API keys and test addresses — configured as GitHub repository secrets.
+          # These map to the configuration keys used by TestConfiguration:
+          #   Smtp2Go:ApiKey:Sandbox → Smtp2Go__ApiKey__Sandbox
+          #   Smtp2Go:ApiKey:Live    → Smtp2Go__ApiKey__Live
+          #   Smtp2Go:TestSender     → Smtp2Go__TestSender
+          #   Smtp2Go:TestRecipient  → Smtp2Go__TestRecipient
+          Smtp2Go__ApiKey__Sandbox: ${{ secrets.SMTP2GO_API_KEY_SANDBOX }}
+          Smtp2Go__ApiKey__Live: ${{ secrets.SMTP2GO_API_KEY_LIVE }}
+          Smtp2Go__TestSender: ${{ secrets.SMTP2GO_TEST_SENDER }}
+          Smtp2Go__TestRecipient: ${{ secrets.SMTP2GO_TEST_RECIPIENT }}
