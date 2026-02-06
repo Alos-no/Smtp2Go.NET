@@ -55,6 +55,10 @@ jobs:
         with:
           name: build-output-Debug
 
+      - name: Restore execute permissions
+        # upload-artifact/download-artifact strips POSIX execute bits.
+        run: chmod +x ./tests/Smtp2Go.NET.UnitTests/bin/Debug/net10.0/Smtp2Go.NET.UnitTests
+
       - name: Run unit tests
         # xUnit v3 test projects are standalone executables — dotnet test does not discover them.
         run: ./tests/Smtp2Go.NET.UnitTests/bin/Debug/net10.0/Smtp2Go.NET.UnitTests
@@ -82,6 +86,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-output-Debug
+
+      - name: Restore execute permissions
+        # upload-artifact/download-artifact strips POSIX execute bits.
+        run: chmod +x ./tests/Smtp2Go.NET.IntegrationTests/bin/Debug/net10.0/Smtp2Go.NET.IntegrationTests
 
       - name: Run integration tests (excluding webhook delivery)
         # Exclude webhook delivery tests (require cloudflared + tunnel infrastructure).
