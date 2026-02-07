@@ -5,7 +5,7 @@
 
     <!-- NuGet Package Properties (common properties inherited from Directory.Build.props) -->
     <PackageId>Smtp2Go.NET</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
     <Description>A .NET client library for the SMTP2GO email delivery API. Supports sending emails, webhook management, and email statistics with built-in resilience.</Description>
     <PackageTags>smtp2go;email;smtp;api;webhook;dotnet</PackageTags>
   </PropertyGroup>

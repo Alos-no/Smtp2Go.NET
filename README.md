@@ -90,16 +90,16 @@ public IActionResult HandleWebhook([FromBody] WebhookCallbackPayload payload)
     switch (payload.Event)
     {
         case WebhookCallbackEvent.Delivered:
-            logger.LogInformation("Delivered to {Email}", payload.Email);
+            logger.LogInformation("Delivered to {Recipient}", payload.Recipient);
             break;
 
         case WebhookCallbackEvent.Bounce:
-            logger.LogWarning("Bounce ({Type}) for {Email}: {Context}",
-                payload.BounceType, payload.Email, payload.BounceContext);
+            logger.LogWarning("Bounce ({Type}) for {Recipient}: {Context}",
+                payload.BounceType, payload.Recipient, payload.BounceContext);
             break;
 
         case WebhookCallbackEvent.SpamComplaint:
-            logger.LogWarning("Spam complaint from {Email}", payload.Email);
+            logger.LogWarning("Spam complaint from {Recipient}", payload.Recipient);
             break;
     }
 
@@ -129,14 +129,16 @@ SMTP2GO uses different event names for **subscriptions** vs **callback payloads*
 |-------|------|-------------|
 | `Event` | `WebhookCallbackEvent` | The event type that triggered this callback |
 | `EmailId` | `string?` | SMTP2GO email identifier (correlates with send response) |
-| `Email` | `string?` | Recipient email address for this event |
+| `Recipient` | `string?` | Per-event recipient (`rcpt`); present for delivered/bounce events |
+| `Recipients` | `string[]?` | All recipients from the original send; present for processed events |
 | `Sender` | `string?` | Sender email address |
-| `Timestamp` | `int` | Unix timestamp (seconds since epoch) |
-| `Hostname` | `string?` | SMTP2GO server that processed the email |
-| `RecipientsList` | `string[]?` | All recipients from the original send |
+| `Time` | `DateTimeOffset?` | ISO 8601 timestamp when the event occurred |
+| `SendTime` | `DateTimeOffset?` | ISO 8601 timestamp when the email was sent by SMTP2GO |
+| `SourceHost` | `string?` | Source host IP of the SMTP2GO server that processed the email |
 | `BounceType` | `BounceType?` | `Hard` or `Soft` (bounce events only) |
-| `BounceContext` | `string?` | SMTP transaction context (bounce events only) |
-| `Host` | `string?` | Target mail server host and IP (bounce events only) |
+| `BounceContext` | `string?` | SMTP transaction context (bounce and delivered events) |
+| `Host` | `string?` | Target mail server host and IP (bounce and delivered events) |
+| `SmtpResponse` | `string?` | SMTP 250 response from receiving server (delivered events only) |
 | `ClickUrl` | `string?` | Original URL clicked (click events only) |
 | `Link` | `string?` | Tracked link URL (click events only) |
 
@@ -209,7 +211,7 @@ dotnet build Smtp2Go.NET.slnx
 ### Testing
 
 ```bash
-# Unit tests (73 tests, no network required)
+# Unit tests (74 tests, no network required)
 tests/Smtp2Go.NET.UnitTests/bin/Debug/net10.0/Smtp2Go.NET.UnitTests
 
 # Integration tests (15 tests, requires API keys configured via user secrets)
@@ -244,7 +246,7 @@ Smtp2Go.NET/
 │   ├── Smtp2GoClient.cs              # Main client implementation
 │   └── ServiceCollectionExtensions.cs # DI registration
 └── tests/
-    ├── Smtp2Go.NET.UnitTests/         # 73 unit tests (Moq-based)
+    ├── Smtp2Go.NET.UnitTests/         # 77 unit tests (Moq-based)
     └── Smtp2Go.NET.IntegrationTests/  # 15 integration tests (live API)
 ```
 

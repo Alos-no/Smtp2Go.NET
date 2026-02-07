@@ -13,7 +13,10 @@ using System.Text.Json.Serialization;
 ///   <para>
 ///     The fields populated depend on the event type:
 ///     <list type="bullet">
-///       <item><see cref="BounceType"/>, <see cref="BounceContext"/>, and <see cref="Host"/> are only present for bounce events.</item>
+///       <item><see cref="Recipient"/> (<c>rcpt</c>) is present for delivered and bounce events.</item>
+///       <item><see cref="Recipients"/> is present for processed events (array of all recipients).</item>
+///       <item><see cref="BounceType"/>, <see cref="BounceContext"/>, and <see cref="Host"/>
+///             are present for bounce and delivered events.</item>
 ///       <item><see cref="ClickUrl"/> and <see cref="Link"/> are only present for click events.</item>
 ///     </list>
 ///   </para>
@@ -27,7 +30,7 @@ using System.Text.Json.Serialization;
 ///       switch (payload.Event)
 ///       {
 ///         case WebhookCallbackEvent.Delivered:
-///           // Handle delivery confirmation
+///           // Handle delivery confirmation — payload.Recipient has the recipient
 ///           break;
 ///         case WebhookCallbackEvent.Bounce:
 ///           // Handle bounce — check payload.BounceType for hard/soft
@@ -40,10 +43,13 @@ using System.Text.Json.Serialization;
 public class WebhookCallbackPayload
 {
   /// <summary>
-  ///   Gets the hostname of the SMTP2GO sending server that processed the email.
+  ///   Gets the source host IP address of the SMTP2GO server that processed the email.
   /// </summary>
-  [JsonPropertyName("hostname")]
-  public string? Hostname { get; init; }
+  /// <remarks>
+  ///   Maps to the <c>srchost</c> field in the SMTP2GO webhook JSON payload.
+  /// </remarks>
+  [JsonPropertyName("srchost")]
+  public string? SourceHost { get; init; }
 
   /// <summary>
   ///   Gets the unique SMTP2GO identifier for the email associated with this event.
@@ -72,29 +78,37 @@ public class WebhookCallbackPayload
   public WebhookCallbackEvent Event { get; init; }
 
   /// <summary>
-  ///   Gets the Unix timestamp (seconds since epoch) when the event occurred.
+  ///   Gets the ISO 8601 timestamp when the event occurred.
   /// </summary>
   /// <remarks>
-  ///   <para>
-  ///     Convert to <see cref="DateTimeOffset"/> using
-  ///     <see cref="DateTimeOffset.FromUnixTimeSeconds"/>.
-  ///   </para>
+  ///   Maps to the <c>time</c> field in the SMTP2GO webhook JSON payload.
+  ///   Format example: <c>2026-02-07T18:05:02Z</c>.
   /// </remarks>
-  [JsonPropertyName("timestamp")]
-  public int Timestamp { get; init; }
+  [JsonPropertyName("time")]
+  public DateTimeOffset? Time { get; init; }
 
   /// <summary>
-  ///   Gets the recipient email address associated with this event.
+  ///   Gets the ISO 8601 timestamp when the email was sent by SMTP2GO.
+  /// </summary>
+  /// <remarks>
+  ///   Maps to the <c>sendtime</c> field in the SMTP2GO webhook JSON payload.
+  ///   Format example: <c>2026-02-07T18:05:02.199324+00:00</c>.
+  /// </remarks>
+  [JsonPropertyName("sendtime")]
+  public DateTimeOffset? SendTime { get; init; }
+
+  /// <summary>
+  ///   Gets the per-event recipient email address.
   /// </summary>
   /// <remarks>
   ///   <para>
-  ///     The specific recipient that this event applies to. For example,
-  ///     a delivered event for a multi-recipient email will generate one
-  ///     webhook per recipient.
+  ///     Maps to the <c>rcpt</c> field in the SMTP2GO webhook JSON payload.
+  ///     Present for delivered and bounce events (one webhook per recipient).
+  ///     Not present for processed events — use <see cref="Recipients"/> instead.
   ///   </para>
   /// </remarks>
-  [JsonPropertyName("email")]
-  public string? Email { get; init; }
+  [JsonPropertyName("rcpt")]
+  public string? Recipient { get; init; }
 
   /// <summary>
   ///   Gets the sender email address of the original email.
@@ -107,11 +121,13 @@ public class WebhookCallbackPayload
   /// </summary>
   /// <remarks>
   ///   <para>
-  ///     Contains all To, CC, and BCC recipients from the original send request.
+  ///     Maps to the <c>recipients</c> field in the SMTP2GO webhook JSON payload.
+  ///     Present for processed events. For delivered/bounce events, use
+  ///     <see cref="Recipient"/> (<c>rcpt</c>) which has the per-event recipient.
   ///   </para>
   /// </remarks>
-  [JsonPropertyName("recipients_list")]
-  public string[]? RecipientsList { get; init; }
+  [JsonPropertyName("recipients")]
+  public string[]? Recipients { get; init; }
 
   /// <summary>
   ///   Gets the bounce type when the event is a bounce.
@@ -132,12 +148,13 @@ public class WebhookCallbackPayload
   public BounceType? BounceType { get; init; }
 
   /// <summary>
-  ///   Gets the bounce diagnostic context from the recipient's mail server.
+  ///   Gets the diagnostic context from the recipient's mail server.
   /// </summary>
   /// <remarks>
   ///   <para>
-  ///     Only populated for <see cref="WebhookCallbackEvent.Bounce"/> events. Contains
+  ///     Present for bounce and delivered events. For bounce events, contains
   ///     the SMTP transaction context (e.g., <c>"RCPT TO:&lt;user@example.com&gt;"</c>).
+  ///     For delivered events, may contain <c>"Unavailable"</c>.
   ///   </para>
   /// </remarks>
   [JsonPropertyName("context")]
@@ -148,12 +165,24 @@ public class WebhookCallbackPayload
   /// </summary>
   /// <remarks>
   ///   <para>
-  ///     Only populated for <see cref="WebhookCallbackEvent.Bounce"/> events. Contains the
-  ///     MX host and IP address (e.g., <c>"gmail-smtp-in.l.google.com [209.85.233.26]"</c>).
+  ///     Present for bounce and delivered events. Contains the MX host and IP address
+  ///     (e.g., <c>"mail.protonmail.ch [176.119.200.128]"</c>).
   ///   </para>
   /// </remarks>
   [JsonPropertyName("host")]
   public string? Host { get; init; }
+
+  /// <summary>
+  ///   Gets the SMTP response message from the receiving mail server.
+  /// </summary>
+  /// <remarks>
+  ///   <para>
+  ///     Present for delivered events. Contains the SMTP 250 response
+  ///     (e.g., <c>"250 2.0.0 Ok: 2788 bytes queued as 4f7f4b3tWbzKy"</c>).
+  ///   </para>
+  /// </remarks>
+  [JsonPropertyName("message")]
+  public string? SmtpResponse { get; init; }
 
   /// <summary>
   ///   Gets the URL that was clicked by the recipient.
