@@ -290,7 +290,11 @@ public sealed class WebhookDeliveryIntegrationTests : IClassFixture<Smtp2GoLiveF
     };
     var webhookUrl = webhookUri.Uri.AbsoluteUri;
 
-    // Step 3: Register the webhook with SMTP2GO.
+    // Step 3: Delete any stale webhooks from previous runs.
+    // SMTP2GO free tier allows only 1 webhook — a stale webhook from a failed run blocks creation.
+    await DeleteAllExistingWebhooksAsync(ct);
+
+    // Step 4: Register the webhook with SMTP2GO.
     var createRequest = new WebhookCreateRequest
     {
       WebhookUrl = webhookUrl,
@@ -305,6 +309,35 @@ public sealed class WebhookDeliveryIntegrationTests : IClassFixture<Smtp2GoLiveF
     Console.Error.WriteLine($"[WebhookDeliveryTest] Webhook created: ID={webhookId}, URL={webhookUrl}");
 
     return webhookId;
+  }
+
+
+  /// <summary>
+  ///   Deletes all existing webhooks on the SMTP2GO account.
+  ///   SMTP2GO free tier limits accounts to 1 webhook — stale webhooks from
+  ///   previous failed runs block creation of new ones.
+  /// </summary>
+  private async Task DeleteAllExistingWebhooksAsync(CancellationToken ct)
+  {
+    var listResponse = await _fixture.Client.Webhooks.ListAsync(ct);
+
+    if (listResponse.Data is not { Length: > 0 })
+      return;
+
+    foreach (var webhook in listResponse.Data)
+    {
+      if (webhook.WebhookId is { } id)
+      {
+        try
+        {
+          await _fixture.Client.Webhooks.DeleteAsync(id, ct);
+        }
+        catch
+        {
+          // Best-effort cleanup — continue with remaining webhooks.
+        }
+      }
+    }
   }
 
 
