@@ -9,24 +9,36 @@ using Smtp2Go.NET.Models.Webhooks;
 ///   including the custom JSON converters for <see cref="WebhookCallbackEvent" />
 ///   and <see cref="BounceType" />.
 /// </summary>
+/// <remarks>
+///   JSON fixtures in these tests use the actual SMTP2GO webhook format,
+///   captured from live webhook callbacks (not documentation — the docs are inaccurate).
+///   Key differences from SMTP2GO docs:
+///   <list type="bullet">
+///     <item>Recipient field is <c>"rcpt"</c> (delivered/bounce), not <c>"email"</c>.</item>
+///     <item>Recipients array is <c>"recipients"</c> (processed), not <c>"recipients_list"</c>.</item>
+///     <item>Timestamp is <c>"time"</c> (ISO 8601 string), not <c>"timestamp"</c> (int).</item>
+///     <item>Source host is <c>"srchost"</c>, not <c>"hostname"</c>.</item>
+///   </list>
+/// </remarks>
 [Trait("Category", "Unit")]
 public sealed class WebhookPayloadDeserializationTests
 {
-  #region Delivered Event
+  #region Processed Event
 
   [Fact]
-  public void Deserialize_DeliveredEvent_ParsesCorrectly()
+  public void Deserialize_ProcessedEvent_ParsesCorrectly()
   {
-    // Arrange
+    // Arrange — Actual SMTP2GO processed event format. Note: processed events have "recipients"
+    // array but NOT "rcpt".
     const string json = """
       {
-        "hostname": "mail01.smtp2go.com",
-        "email_id": "abc-123",
-        "event": "delivered",
-        "timestamp": 1700000000,
-        "email": "user@example.com",
-        "sender": "noreply@alos.app",
-        "recipients_list": ["user@example.com", "user2@example.com"]
+        "srchost": "146.70.170.30",
+        "email_id": "1vomg2-abc123",
+        "event": "processed",
+        "time": "2026-02-07T18:05:02Z",
+        "sender": "noreply@example.com",
+        "recipients": ["user@example.com", "user2@example.com"],
+        "sendtime": "2026-02-07T18:05:02.199324+00:00"
       }
       """;
 
@@ -35,15 +47,67 @@ public sealed class WebhookPayloadDeserializationTests
 
     // Assert
     payload.Should().NotBeNull();
-    payload!.Hostname.Should().Be("mail01.smtp2go.com");
-    payload.EmailId.Should().Be("abc-123");
-    payload.Event.Should().Be(WebhookCallbackEvent.Delivered);
-    payload.Timestamp.Should().Be(1700000000);
-    payload.Email.Should().Be("user@example.com");
-    payload.Sender.Should().Be("noreply@alos.app");
-    payload.RecipientsList.Should().HaveCount(2);
+    payload!.SourceHost.Should().Be("146.70.170.30");
+    payload.EmailId.Should().Be("1vomg2-abc123");
+    payload.Event.Should().Be(WebhookCallbackEvent.Processed);
+    payload.Time.Should().Be(new DateTimeOffset(2026, 2, 7, 18, 5, 2, TimeSpan.Zero));
+    payload.SendTime.Should().NotBeNull();
+    payload.Sender.Should().Be("noreply@example.com");
+
+    // Processed events have "recipients" array, not "rcpt".
+    payload.Recipient.Should().BeNull();
+    payload.Recipients.Should().HaveCount(2);
+    payload.Recipients![0].Should().Be("user@example.com");
+
     payload.BounceType.Should().BeNull();
     payload.BounceContext.Should().BeNull();
+  }
+
+  #endregion
+
+
+  #region Delivered Event
+
+  [Fact]
+  public void Deserialize_DeliveredEvent_ParsesCorrectly()
+  {
+    // Arrange — Actual SMTP2GO delivered event format. Note: delivered events have "rcpt"
+    // (single recipient) but NOT "recipients" array.
+    const string json = """
+      {
+        "srchost": "146.70.170.30",
+        "email_id": "1vomg2-abc123",
+        "event": "delivered",
+        "time": "2026-02-07T18:05:06Z",
+        "rcpt": "user@example.com",
+        "sender": "noreply@alos.app",
+        "host": "mail.protonmail.ch [176.119.200.128]",
+        "context": "Unavailable",
+        "message": "250 2.0.0 Ok: 2788 bytes queued as 4f7f4b3tWbzKy",
+        "sendtime": "2026-02-07T18:05:06.215451+00:00"
+      }
+      """;
+
+    // Act
+    var payload = JsonSerializer.Deserialize<WebhookCallbackPayload>(json, Smtp2GoJsonDefaults.Options);
+
+    // Assert
+    payload.Should().NotBeNull();
+    payload!.SourceHost.Should().Be("146.70.170.30");
+    payload.EmailId.Should().Be("1vomg2-abc123");
+    payload.Event.Should().Be(WebhookCallbackEvent.Delivered);
+    payload.Time.Should().Be(new DateTimeOffset(2026, 2, 7, 18, 5, 6, TimeSpan.Zero));
+    payload.SendTime.Should().NotBeNull();
+
+    // Delivered events have "rcpt" (per-event recipient), not "recipients" array.
+    payload.Recipient.Should().Be("user@example.com");
+    payload.Recipients.Should().BeNull();
+
+    payload.Sender.Should().Be("noreply@alos.app");
+    payload.Host.Should().Be("mail.protonmail.ch [176.119.200.128]");
+    payload.BounceContext.Should().Be("Unavailable");
+    payload.SmtpResponse.Should().Be("250 2.0.0 Ok: 2788 bytes queued as 4f7f4b3tWbzKy");
+    payload.BounceType.Should().BeNull();
   }
 
   #endregion
@@ -61,9 +125,9 @@ public sealed class WebhookPayloadDeserializationTests
       {
         "email_id": "bounce-456",
         "event": "bounce",
-        "timestamp": 1700000100,
-        "email": "invalid@nonexistent.com",
-        "from": "noreply@alos.app",
+        "time": "2026-02-07T18:15:00Z",
+        "rcpt": "invalid@nonexistent.com",
+        "sender": "noreply@alos.app",
         "bounce": "hard",
         "context": "RCPT TO:<invalid@nonexistent.com>",
         "host": "gmail-smtp-in.l.google.com [209.85.233.26]"
@@ -79,6 +143,7 @@ public sealed class WebhookPayloadDeserializationTests
     payload.BounceType.Should().Be(BounceType.Hard);
     payload.BounceContext.Should().Be("RCPT TO:<invalid@nonexistent.com>");
     payload.Host.Should().Be("gmail-smtp-in.l.google.com [209.85.233.26]");
+    payload.Recipient.Should().Be("invalid@nonexistent.com");
   }
 
 
@@ -89,8 +154,8 @@ public sealed class WebhookPayloadDeserializationTests
     const string json = """
       {
         "event": "bounce",
-        "timestamp": 1700000200,
-        "email": "user@example.com",
+        "time": "2026-02-07T18:18:00Z",
+        "rcpt": "user@example.com",
         "bounce": "soft",
         "context": "DATA: 452 Mailbox full"
       }
@@ -104,6 +169,7 @@ public sealed class WebhookPayloadDeserializationTests
     payload!.Event.Should().Be(WebhookCallbackEvent.Bounce);
     payload.BounceType.Should().Be(BounceType.Soft);
     payload.BounceContext.Should().Be("DATA: 452 Mailbox full");
+    payload.Recipient.Should().Be("user@example.com");
   }
 
   #endregion
@@ -118,8 +184,8 @@ public sealed class WebhookPayloadDeserializationTests
     const string json = """
       {
         "event": "clicked",
-        "timestamp": 1700000300,
-        "email": "user@example.com",
+        "time": "2026-02-07T18:20:00Z",
+        "rcpt": "user@example.com",
         "click_url": "https://alos.app/dashboard",
         "link": "https://track.smtp2go.com/abc123"
       }
@@ -133,6 +199,7 @@ public sealed class WebhookPayloadDeserializationTests
     payload!.Event.Should().Be(WebhookCallbackEvent.Clicked);
     payload.ClickUrl.Should().Be("https://alos.app/dashboard");
     payload.Link.Should().Be("https://track.smtp2go.com/abc123");
+    payload.Recipient.Should().Be("user@example.com");
   }
 
   #endregion
@@ -151,7 +218,7 @@ public sealed class WebhookPayloadDeserializationTests
   public void CallbackEventConverter_DeserializesKnownEvents(string jsonValue, WebhookCallbackEvent expected)
   {
     // Arrange
-    var json = $$"""{"event": "{{jsonValue}}", "timestamp": 0}""";
+    var json = $$"""{"event": "{{jsonValue}}"}""";
 
     // Act
     var payload = JsonSerializer.Deserialize<WebhookCallbackPayload>(json, Smtp2GoJsonDefaults.Options);
@@ -171,7 +238,7 @@ public sealed class WebhookPayloadDeserializationTests
     // Arrange — The API may introduce new event types in the future.
     // Also verifies that the removed legacy values ("hard_bounced", "soft_bounced")
     // now correctly fall through to Unknown instead of being mapped to dead enum values.
-    var json = $$"""{"event": "{{jsonValue}}", "timestamp": 0}""";
+    var json = $$"""{"event": "{{jsonValue}}"}""";
 
     // Act
     var payload = JsonSerializer.Deserialize<WebhookCallbackPayload>(json, Smtp2GoJsonDefaults.Options);
@@ -214,7 +281,7 @@ public sealed class WebhookPayloadDeserializationTests
   public void BounceTypeConverter_DeserializesKnownTypes(string jsonValue, BounceType expected)
   {
     // Arrange — The "bounce" field contains the bounce classification (hard/soft).
-    var json = $$"""{"event": "bounce", "timestamp": 0, "bounce": "{{jsonValue}}"}""";
+    var json = $$"""{"event": "bounce", "bounce": "{{jsonValue}}"}""";
 
     // Act
     var payload = JsonSerializer.Deserialize<WebhookCallbackPayload>(json, Smtp2GoJsonDefaults.Options);
@@ -229,7 +296,7 @@ public sealed class WebhookPayloadDeserializationTests
   public void BounceTypeConverter_DeserializesUnknownType_AsUnknown()
   {
     // Arrange
-    const string json = """{"event": "bounce", "timestamp": 0, "bounce": "future_type"}""";
+    const string json = """{"event": "bounce", "bounce": "future_type"}""";
 
     // Act
     var payload = JsonSerializer.Deserialize<WebhookCallbackPayload>(json, Smtp2GoJsonDefaults.Options);
@@ -244,7 +311,7 @@ public sealed class WebhookPayloadDeserializationTests
   public void BounceTypeConverter_DeserializesNull_AsNull()
   {
     // Arrange — Non-bounce events have no "bounce" field.
-    const string json = """{"event": "delivered", "timestamp": 0}""";
+    const string json = """{"event": "delivered"}""";
 
     // Act
     var payload = JsonSerializer.Deserialize<WebhookCallbackPayload>(json, Smtp2GoJsonDefaults.Options);
