@@ -45,6 +45,39 @@ public sealed class WebhookManagementIntegrationTests : IClassFixture<Smtp2GoLiv
   #endregion
 
 
+  #region Methods - Helpers
+
+  /// <summary>
+  ///   Deletes all existing webhooks on the SMTP2GO account.
+  ///   SMTP2GO free tier limits accounts to 1 webhook — stale webhooks from
+  ///   previous failed runs or E2E tests block creation of new ones.
+  /// </summary>
+  private async Task DeleteAllExistingWebhooksAsync(CancellationToken ct)
+  {
+    var listResponse = await _fixture.Client.Webhooks.ListAsync(ct);
+
+    if (listResponse.Data is not { Length: > 0 })
+      return;
+
+    foreach (var webhook in listResponse.Data)
+    {
+      if (webhook.WebhookId is { } id)
+      {
+        try
+        {
+          await _fixture.Client.Webhooks.DeleteAsync(id, ct);
+        }
+        catch
+        {
+          // Best-effort cleanup — continue with remaining webhooks.
+        }
+      }
+    }
+  }
+
+  #endregion
+
+
   #region Webhook Lifecycle
 
   [Fact]
@@ -55,6 +88,9 @@ public sealed class WebhookManagementIntegrationTests : IClassFixture<Smtp2GoLiv
 
     var ct = TestContext.Current.CancellationToken;
     int? webhookId = null;
+
+    // SMTP2GO free tier allows only 1 webhook — clear stale webhooks from previous runs.
+    await DeleteAllExistingWebhooksAsync(ct);
 
     try
     {
@@ -132,6 +168,9 @@ public sealed class WebhookManagementIntegrationTests : IClassFixture<Smtp2GoLiv
 
     var ct = TestContext.Current.CancellationToken;
     int? webhookId = null;
+
+    // SMTP2GO free tier allows only 1 webhook — clear stale webhooks from previous runs.
+    await DeleteAllExistingWebhooksAsync(ct);
 
     try
     {
