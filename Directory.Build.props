@@ -1,6 +1,13 @@
 <Project>
 
   <PropertyGroup>
+    <!-- Do not import the monorepo root Directory.Packages.props. This library owns its
+         own package versions and must also build correctly through local project references. -->
+    <ImportDirectoryPackagesProps>false</ImportDirectoryPackagesProps>
+    <!-- Opt out of Central Package Management — this library is a standalone
+         NuGet package with its own versioning, independent of the monorepo. -->
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+
     <!-- Multi-targeting: .NET 8 (LTS), .NET 9, .NET 10 -->
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
 

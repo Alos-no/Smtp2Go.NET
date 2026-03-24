@@ -11,6 +11,10 @@ using System.Text.Json.Serialization;
 ///     The SMTP2GO API uses snake_case naming convention for all JSON properties.
 ///     Null values are omitted from serialization to keep requests minimal.
 ///   </para>
+///   <para>
+///     Deserialization is case-insensitive because live webhook captures showed mixed casing for
+///     some callback keys (for example <c>Message-Id</c> and <c>Subject</c>).
+///   </para>
 /// </remarks>
 internal static class Smtp2GoJsonDefaults
 {
@@ -20,6 +24,7 @@ internal static class Smtp2GoJsonDefaults
   public static readonly JsonSerializerOptions Options = new()
   {
     PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+    PropertyNameCaseInsensitive = true,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
   };
 }

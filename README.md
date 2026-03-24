@@ -81,12 +81,27 @@ await smtp2Go.Webhooks.DeleteAsync(webhookId);
 
 ### Receiving Webhook Callbacks
 
-SMTP2GO sends HTTP POST requests to your registered webhook URL when email events occur. The `WebhookCallbackPayload` model deserializes the inbound payload:
+SMTP2GO sends HTTP POST requests to your registered webhook URL when email events occur. Callbacks may arrive as JSON or as form-encoded payloads, and both should be normalized into the same `WebhookCallbackPayload` model:
 
 ```csharp
 [HttpPost("webhooks/smtp2go")]
-public IActionResult HandleWebhook([FromBody] WebhookCallbackPayload payload)
+public async Task<IActionResult> HandleWebhook(CancellationToken cancellationToken)
 {
+    WebhookCallbackPayload payload;
+
+    if (Request.HasFormContentType)
+    {
+        var form = await Request.ReadFormAsync(cancellationToken);
+        payload = WebhookCallbackPayloadParser.ParseFormValues(
+            form.SelectMany(pair => pair.Value.Select(value =>
+                new KeyValuePair<string, string?>(pair.Key, value))));
+    }
+    else
+    {
+        payload = await Request.ReadFromJsonAsync<WebhookCallbackPayload>(cancellationToken: cancellationToken)
+            ?? new WebhookCallbackPayload();
+    }
+
     switch (payload.Event)
     {
         case WebhookCallbackEvent.Delivered:

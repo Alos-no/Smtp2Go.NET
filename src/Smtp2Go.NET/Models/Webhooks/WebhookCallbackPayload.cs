@@ -8,16 +8,23 @@ using System.Text.Json.Serialization;
 /// <remarks>
 ///   <para>
 ///     SMTP2GO sends HTTP POST requests to registered webhook URLs when email
-///     events occur. This model deserializes the inbound webhook payload.
+///     events occur. This model is the canonical in-memory representation of
+///     JSON and form-encoded webhook callbacks.
 ///   </para>
 ///   <para>
-///     The fields populated depend on the event type:
+///     Live callbacks captured in the integration test suite showed that SMTP2GO does not emit one
+///     stable callback shape. The fields populated depend on the event type:
 ///     <list type="bullet">
 ///       <item><see cref="Recipient"/> (<c>rcpt</c>) is present for delivered and bounce events.</item>
 ///       <item><see cref="Recipients"/> is present for processed events (array of all recipients).</item>
 ///       <item><see cref="BounceType"/>, <see cref="BounceContext"/>, and <see cref="Host"/>
 ///             are present for bounce and delivered events.</item>
 ///       <item><see cref="ClickUrl"/> and <see cref="Link"/> are only present for click events.</item>
+///       <item>
+///         Processed and delivered callbacks include additional provider metadata such as
+///         <c>id</c>, <c>auth</c>, <c>message-id</c>/<c>Message-Id</c>, <c>subject</c>/<c>Subject</c>,
+///         <c>from</c>, <c>from_address</c>, and <c>from_name</c>.
+///       </item>
 ///     </list>
 ///   </para>
 /// </remarks>
@@ -25,8 +32,22 @@ using System.Text.Json.Serialization;
 ///   <code>
 ///     // In an ASP.NET Core controller:
 ///     [HttpPost("webhooks/smtp2go")]
-///     public IActionResult HandleWebhook([FromBody] WebhookCallbackPayload payload)
+///     public async Task&lt;IActionResult&gt; HandleWebhook(CancellationToken cancellationToken)
 ///     {
+///       WebhookCallbackPayload payload;
+///
+///       if (Request.HasFormContentType)
+///       {
+///         var form = await Request.ReadFormAsync(cancellationToken);
+///         payload = WebhookCallbackPayloadParser.ParseFormValues(
+///           form.SelectMany(pair => pair.Value.Select(value => new KeyValuePair&lt;string, string?&gt;(pair.Key, value))));
+///       }
+///       else
+///       {
+///         payload = await Request.ReadFromJsonAsync&lt;WebhookCallbackPayload&gt;(cancellationToken: cancellationToken)
+///           ?? new WebhookCallbackPayload();
+///       }
+///
 ///       switch (payload.Event)
 ///       {
 ///         case WebhookCallbackEvent.Delivered:
@@ -65,6 +86,22 @@ public class WebhookCallbackPayload
   public string? EmailId { get; init; }
 
   /// <summary>
+  ///   Gets the SMTP message identifier observed in the webhook callback.
+  /// </summary>
+  /// <remarks>
+  ///   <para>
+  ///     This is distinct from <see cref="EmailId" />. <see cref="EmailId" /> is SMTP2GO's provider-side
+  ///     correlation ID returned by the send API, while this property carries the RFC 5322 Message-ID style
+  ///     value observed in webhook callbacks.
+  ///   </para>
+  ///   <para>
+  ///     Live callbacks emitted this field with inconsistent casing (<c>Message-Id</c> and <c>message-id</c>).
+  ///   </para>
+  /// </remarks>
+  [JsonPropertyName("message-id")]
+  public string? MessageId { get; init; }
+
+  /// <summary>
   ///   Gets the type of event that triggered this webhook callback.
   /// </summary>
   /// <remarks>
@@ -98,6 +135,35 @@ public class WebhookCallbackPayload
   public DateTimeOffset? SendTime { get; init; }
 
   /// <summary>
+  ///   Gets the message subject observed in the webhook callback.
+  /// </summary>
+  /// <remarks>
+  ///   Live callbacks emitted this field with inconsistent casing (<c>Subject</c> and <c>subject</c>).
+  /// </remarks>
+  [JsonPropertyName("subject")]
+  public string? Subject { get; init; }
+
+  /// <summary>
+  ///   Gets the provider-specific callback event identifier.
+  /// </summary>
+  /// <remarks>
+  ///   This maps to the raw <c>id</c> field observed in live callbacks. Different events for the same
+  ///   <see cref="EmailId" /> can carry different values, so this is treated as an event-level identifier.
+  /// </remarks>
+  [JsonPropertyName("id")]
+  public string? EventId { get; init; }
+
+  /// <summary>
+  ///   Gets the opaque provider auth marker observed in live callbacks.
+  /// </summary>
+  /// <remarks>
+  ///   The exact semantics are undocumented. Live callbacks included values such as a truncated API key
+  ///   prefix, so the library preserves the field as opaque diagnostic metadata.
+  /// </remarks>
+  [JsonPropertyName("auth")]
+  public string? Auth { get; init; }
+
+  /// <summary>
   ///   Gets the per-event recipient email address.
   /// </summary>
   /// <remarks>
@@ -115,6 +181,29 @@ public class WebhookCallbackPayload
   /// </summary>
   [JsonPropertyName("sender")]
   public string? Sender { get; init; }
+
+  /// <summary>
+  ///   Gets the raw <c>from</c> field observed in live callbacks.
+  /// </summary>
+  /// <remarks>
+  ///   Live callbacks included <c>sender</c>, <c>from</c>, and <c>from_address</c>. They carried the same
+  ///   address in the captured delivered and processed payloads, so this property is preserved separately
+  ///   to avoid losing transport detail.
+  /// </remarks>
+  [JsonPropertyName("from")]
+  public string? From { get; init; }
+
+  /// <summary>
+  ///   Gets the raw <c>from_address</c> field observed in live callbacks.
+  /// </summary>
+  [JsonPropertyName("from_address")]
+  public string? FromAddress { get; init; }
+
+  /// <summary>
+  ///   Gets the raw <c>from_name</c> field observed in live callbacks.
+  /// </summary>
+  [JsonPropertyName("from_name")]
+  public string? FromName { get; init; }
 
   /// <summary>
   ///   Gets the list of all recipients of the original email.

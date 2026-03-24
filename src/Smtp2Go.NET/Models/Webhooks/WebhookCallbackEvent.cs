@@ -116,32 +116,6 @@ public enum WebhookCallbackEvent
 /// </remarks>
 public class WebhookCallbackEventJsonConverter : JsonConverter<WebhookCallbackEvent>
 {
-  #region Constants & Statics
-
-  /// <summary>SMTP2GO callback payload string for the "processed" event.</summary>
-  private const string ProcessedValue = "processed";
-
-  /// <summary>SMTP2GO callback payload string for the "delivered" event.</summary>
-  private const string DeliveredValue = "delivered";
-
-  /// <summary>SMTP2GO callback payload string for the "bounce" event.</summary>
-  private const string BounceValue = "bounce";
-
-  /// <summary>SMTP2GO callback payload string for the "opened" event.</summary>
-  private const string OpenedValue = "opened";
-
-  /// <summary>SMTP2GO callback payload string for the "clicked" event.</summary>
-  private const string ClickedValue = "clicked";
-
-  /// <summary>SMTP2GO callback payload string for the "unsubscribed" event.</summary>
-  private const string UnsubscribedValue = "unsubscribed";
-
-  /// <summary>SMTP2GO callback payload string for the "spam_complaint" event.</summary>
-  private const string SpamComplaintValue = "spam_complaint";
-
-  #endregion
-
-
   #region Methods - Public
 
   /// <summary>
@@ -156,19 +130,7 @@ public class WebhookCallbackEventJsonConverter : JsonConverter<WebhookCallbackEv
     Type typeToConvert,
     JsonSerializerOptions options)
   {
-    var value = reader.GetString();
-
-    return value switch
-    {
-      ProcessedValue => WebhookCallbackEvent.Processed,
-      DeliveredValue => WebhookCallbackEvent.Delivered,
-      BounceValue => WebhookCallbackEvent.Bounce,
-      OpenedValue => WebhookCallbackEvent.Opened,
-      ClickedValue => WebhookCallbackEvent.Clicked,
-      UnsubscribedValue => WebhookCallbackEvent.Unsubscribed,
-      SpamComplaintValue => WebhookCallbackEvent.SpamComplaint,
-      _ => WebhookCallbackEvent.Unknown
-    };
+    return WebhookCallbackValueParser.ParseCallbackEvent(reader.GetString());
   }
 
   /// <summary>
@@ -182,19 +144,7 @@ public class WebhookCallbackEventJsonConverter : JsonConverter<WebhookCallbackEv
     WebhookCallbackEvent value,
     JsonSerializerOptions options)
   {
-    var stringValue = value switch
-    {
-      WebhookCallbackEvent.Processed => ProcessedValue,
-      WebhookCallbackEvent.Delivered => DeliveredValue,
-      WebhookCallbackEvent.Bounce => BounceValue,
-      WebhookCallbackEvent.Opened => OpenedValue,
-      WebhookCallbackEvent.Clicked => ClickedValue,
-      WebhookCallbackEvent.Unsubscribed => UnsubscribedValue,
-      WebhookCallbackEvent.SpamComplaint => SpamComplaintValue,
-      _ => "unknown"
-    };
-
-    writer.WriteStringValue(stringValue);
+    writer.WriteStringValue(WebhookCallbackValueParser.FormatCallbackEvent(value));
   }
 
   #endregion
