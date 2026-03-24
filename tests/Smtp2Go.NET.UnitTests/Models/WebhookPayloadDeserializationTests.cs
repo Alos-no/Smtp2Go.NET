@@ -32,10 +32,17 @@ public sealed class WebhookPayloadDeserializationTests
     // array but NOT "rcpt".
     const string json = """
       {
+        "message-id": "<E1w4x2g-FnQW0hPru7M-NRRC@message-id.smtpcorp.com>",
+        "subject": "Webhook Delivery Test - b83d60289ef94e028a45a905198ad9b7",
+        "id": "e57b42854a69ee377c4221c22e08e5e7",
+        "auth": "api-597435AE4E55",
         "srchost": "146.70.170.30",
         "email_id": "1vomg2-abc123",
         "event": "processed",
         "time": "2026-02-07T18:05:02Z",
+        "from": "noreply@example.com",
+        "from_address": "noreply@example.com",
+        "from_name": "",
         "sender": "noreply@example.com",
         "recipients": ["user@example.com", "user2@example.com"],
         "sendtime": "2026-02-07T18:05:02.199324+00:00"
@@ -47,12 +54,19 @@ public sealed class WebhookPayloadDeserializationTests
 
     // Assert
     payload.Should().NotBeNull();
+    payload!.MessageId.Should().Be("<E1w4x2g-FnQW0hPru7M-NRRC@message-id.smtpcorp.com>");
+    payload.Subject.Should().Be("Webhook Delivery Test - b83d60289ef94e028a45a905198ad9b7");
+    payload.EventId.Should().Be("e57b42854a69ee377c4221c22e08e5e7");
+    payload.Auth.Should().Be("api-597435AE4E55");
     payload!.SourceHost.Should().Be("146.70.170.30");
     payload.EmailId.Should().Be("1vomg2-abc123");
     payload.Event.Should().Be(WebhookCallbackEvent.Processed);
     payload.Time.Should().Be(new DateTimeOffset(2026, 2, 7, 18, 5, 2, TimeSpan.Zero));
     payload.SendTime.Should().NotBeNull();
     payload.Sender.Should().Be("noreply@example.com");
+    payload.From.Should().Be("noreply@example.com");
+    payload.FromAddress.Should().Be("noreply@example.com");
+    payload.FromName.Should().BeEmpty();
 
     // Processed events have "recipients" array, not "rcpt".
     payload.Recipient.Should().BeNull();
@@ -75,11 +89,18 @@ public sealed class WebhookPayloadDeserializationTests
     // (single recipient) but NOT "recipients" array.
     const string json = """
       {
+        "Message-Id": "<E1w4x2g-FnQW0hPru7M-NRRC@message-id.smtpcorp.com>",
+        "Subject": "Webhook Delivery Test - b83d60289ef94e028a45a905198ad9b7",
+        "id": "6dfa7d3b4514c1f5f0e916bc0cc0395c",
+        "auth": "api-597435AE4E55",
         "srchost": "146.70.170.30",
         "email_id": "1vomg2-abc123",
         "event": "delivered",
         "time": "2026-02-07T18:05:06Z",
         "rcpt": "user@example.com",
+        "from": "noreply@alos.app",
+        "from_address": "noreply@alos.app",
+        "from_name": "",
         "sender": "noreply@alos.app",
         "host": "mail.protonmail.ch [176.119.200.128]",
         "context": "Unavailable",
@@ -93,7 +114,11 @@ public sealed class WebhookPayloadDeserializationTests
 
     // Assert
     payload.Should().NotBeNull();
-    payload!.SourceHost.Should().Be("146.70.170.30");
+    payload!.MessageId.Should().Be("<E1w4x2g-FnQW0hPru7M-NRRC@message-id.smtpcorp.com>");
+    payload.Subject.Should().Be("Webhook Delivery Test - b83d60289ef94e028a45a905198ad9b7");
+    payload.EventId.Should().Be("6dfa7d3b4514c1f5f0e916bc0cc0395c");
+    payload.Auth.Should().Be("api-597435AE4E55");
+    payload.SourceHost.Should().Be("146.70.170.30");
     payload.EmailId.Should().Be("1vomg2-abc123");
     payload.Event.Should().Be(WebhookCallbackEvent.Delivered);
     payload.Time.Should().Be(new DateTimeOffset(2026, 2, 7, 18, 5, 6, TimeSpan.Zero));
@@ -104,6 +129,9 @@ public sealed class WebhookPayloadDeserializationTests
     payload.Recipients.Should().BeNull();
 
     payload.Sender.Should().Be("noreply@alos.app");
+    payload.From.Should().Be("noreply@alos.app");
+    payload.FromAddress.Should().Be("noreply@alos.app");
+    payload.FromName.Should().BeEmpty();
     payload.Host.Should().Be("mail.protonmail.ch [176.119.200.128]");
     payload.BounceContext.Should().Be("Unavailable");
     payload.SmtpResponse.Should().Be("250 2.0.0 Ok: 2788 bytes queued as 4f7f4b3tWbzKy");
@@ -218,6 +246,26 @@ public sealed class WebhookPayloadDeserializationTests
   public void CallbackEventConverter_DeserializesKnownEvents(string jsonValue, WebhookCallbackEvent expected)
   {
     // Arrange
+    var json = $$"""{"event": "{{jsonValue}}"}""";
+
+    // Act
+    var payload = JsonSerializer.Deserialize<WebhookCallbackPayload>(json, Smtp2GoJsonDefaults.Options);
+
+    // Assert
+    payload.Should().NotBeNull();
+    payload!.Event.Should().Be(expected);
+  }
+
+
+  [Theory]
+  [InlineData("open", WebhookCallbackEvent.Opened)]
+  [InlineData("click", WebhookCallbackEvent.Clicked)]
+  [InlineData("spam", WebhookCallbackEvent.SpamComplaint)]
+  [InlineData("unsubscribe", WebhookCallbackEvent.Unsubscribed)]
+  public void CallbackEventConverter_DeserializesCompatibilityAliases(string jsonValue, WebhookCallbackEvent expected)
+  {
+    // Arrange â€” Preserve the compatibility aliases already accepted by the form workaround
+    // so JSON and form callback parsing cannot drift again.
     var json = $$"""{"event": "{{jsonValue}}"}""";
 
     // Act

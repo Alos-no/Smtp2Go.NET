@@ -119,19 +119,25 @@ public sealed class WebhookDeliveryIntegrationTests : IClassFixture<Smtp2GoLiveF
       // SMTP2GO sends one payload per event per recipient (WebhookCallbackPayload.Event is singular).
       // We accept any event type — 'processed' arrives first, 'delivered' later.
       // 180-second timeout accounts for email delivery delay and SMTP2GO processing time.
-      var payload = await receiver.WaitForPayloadAsync(
-        _ => true,
+      var processedPayload = await receiver.WaitForPayloadAsync(
+        p => p.Event == WebhookCallbackEvent.Processed,
+        timeout: TimeSpan.FromSeconds(180));
+
+      var deliveredPayload = await receiver.WaitForPayloadAsync(
+        p => p.Event == WebhookCallbackEvent.Delivered,
         timeout: TimeSpan.FromSeconds(180));
 
       // Diagnostic: Log all received payloads and raw bodies for debugging.
       LogReceivedPayloads("WebhookDeliveryTest", receiver);
 
       // Assert: At minimum, we should receive a 'processed' or 'delivered' event.
-      payload.Should().NotBeNull("a webhook event (processed or delivered) should be received within 180 seconds");
+      processedPayload.Should().NotBeNull("a processed webhook event should be received within 180 seconds");
+      deliveredPayload.Should().NotBeNull("a delivered webhook event should be received within 180 seconds after SMTP2GO accepts the email");
 
       // Log which event we received.
-      Console.Error.WriteLine($"[WebhookDeliveryTest] Received webhook event: {payload!.Event}");
-      payload.Event.Should().BeOneOf(WebhookCallbackEvent.Processed, WebhookCallbackEvent.Delivered);
+      Console.Error.WriteLine($"[WebhookDeliveryTest] Received processed webhook event: {processedPayload!.Event}");
+      Console.Error.WriteLine($"[WebhookDeliveryTest] Received delivered webhook event: {deliveredPayload!.Event}");
+      deliveredPayload.Event.Should().Be(WebhookCallbackEvent.Delivered);
     }
     finally
     {
@@ -372,7 +378,7 @@ public sealed class WebhookDeliveryIntegrationTests : IClassFixture<Smtp2GoLiveF
     Console.Error.WriteLine($"[{testName}] Received {receiver.ReceivedPayloads.Count} payload(s), {receiver.RawBodies.Count} raw body(ies).");
 
     foreach (var raw in receiver.RawBodies)
-      Console.Error.WriteLine($"[{testName}] Raw body: {raw[..Math.Min(raw.Length, 500)]}");
+      Console.Error.WriteLine($"[{testName}] Raw body: {raw}");
   }
 
 

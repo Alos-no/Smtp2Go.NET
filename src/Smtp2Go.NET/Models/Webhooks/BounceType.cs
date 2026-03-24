@@ -73,21 +73,6 @@ public enum BounceType
 /// </remarks>
 public class BounceTypeJsonConverter : JsonConverter<BounceType>
 {
-  #region Constants & Statics
-
-  /// <summary>
-  ///   The SMTP2GO API string for hard bounces.
-  /// </summary>
-  private const string HardValue = "hard";
-
-  /// <summary>
-  ///   The SMTP2GO API string for soft bounces.
-  /// </summary>
-  private const string SoftValue = "soft";
-
-  #endregion
-
-
   #region Methods - Public
 
   /// <summary>
@@ -102,14 +87,7 @@ public class BounceTypeJsonConverter : JsonConverter<BounceType>
     Type typeToConvert,
     JsonSerializerOptions options)
   {
-    var value = reader.GetString();
-
-    return value switch
-    {
-      HardValue => BounceType.Hard,
-      SoftValue => BounceType.Soft,
-      _ => BounceType.Unknown
-    };
+    return WebhookCallbackValueParser.ParseBounceType(reader.GetString()) ?? BounceType.Unknown;
   }
 
   /// <summary>
@@ -123,14 +101,7 @@ public class BounceTypeJsonConverter : JsonConverter<BounceType>
     BounceType value,
     JsonSerializerOptions options)
   {
-    var stringValue = value switch
-    {
-      BounceType.Hard => HardValue,
-      BounceType.Soft => SoftValue,
-      _ => "unknown"
-    };
-
-    writer.WriteStringValue(stringValue);
+    writer.WriteStringValue(WebhookCallbackValueParser.FormatBounceType(value));
   }
 
   #endregion

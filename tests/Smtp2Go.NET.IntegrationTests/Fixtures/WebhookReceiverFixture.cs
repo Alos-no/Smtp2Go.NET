@@ -3,6 +3,7 @@ namespace Smtp2Go.NET.IntegrationTests.Fixtures;
 using System.Collections.Concurrent;
 using System.Text;
 using System.Text.Json;
+using Internal;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -55,7 +56,7 @@ internal sealed class WebhookReceiverFixture : IAsyncDisposable
   /// <summary>Thread-safe collection of received webhook payloads.</summary>
   private readonly ConcurrentBag<WebhookCallbackPayload> _receivedPayloads = new();
 
-  /// <summary>Thread-safe collection of raw JSON bodies received (for debugging).</summary>
+  /// <summary>Thread-safe collection of raw request bodies received (for debugging).</summary>
   private readonly ConcurrentBag<string> _rawBodies = new();
 
   /// <summary>Registered waiters notified via <see cref="TaskCompletionSource{TResult}"/> when a matching payload arrives.</summary>
@@ -72,7 +73,7 @@ internal sealed class WebhookReceiverFixture : IAsyncDisposable
   /// <summary>Gets all received webhook payloads.</summary>
   public IReadOnlyCollection<WebhookCallbackPayload> ReceivedPayloads => _receivedPayloads.ToArray();
 
-  /// <summary>Gets all raw JSON bodies received (useful for debugging deserialization issues).</summary>
+  /// <summary>Gets all raw request bodies received (useful for debugging deserialization issues).</summary>
   public IReadOnlyCollection<string> RawBodies => _rawBodies.ToArray();
 
   #endregion
@@ -142,9 +143,14 @@ internal sealed class WebhookReceiverFixture : IAsyncDisposable
 
       Console.Error.WriteLine($"[WebhookReceiver] Auth OK");
 
+      // Buffer the request so we can capture the raw body for diagnostics and still let
+      // the form reader parse the payload when the callback is form-encoded.
+      ctx.Request.EnableBuffering();
+
       // Read and store the raw body.
       using var reader = new StreamReader(ctx.Request.Body, Encoding.UTF8);
       var body = await reader.ReadToEndAsync();
+      ctx.Request.Body.Position = 0;
       _rawBodies.Add(body);
 
       Console.Error.WriteLine($"[WebhookReceiver] Body length: {body.Length} chars");
@@ -152,10 +158,7 @@ internal sealed class WebhookReceiverFixture : IAsyncDisposable
       // Attempt to deserialize the webhook payload.
       try
       {
-        var payload = JsonSerializer.Deserialize<WebhookCallbackPayload>(body, new JsonSerializerOptions
-        {
-          PropertyNameCaseInsensitive = true
-        });
+        var payload = await ParsePayloadAsync(ctx, body);
 
         if (payload != null)
         {
@@ -252,6 +255,26 @@ internal sealed class WebhookReceiverFixture : IAsyncDisposable
       if (waiter.Predicate(payload))
         waiter.Tcs.TrySetResult(payload);
     }
+  }
+
+
+  /// <summary>
+  ///   Parses the inbound webhook payload based on the request content type.
+  /// </summary>
+  /// <param name="ctx">The current HTTP context.</param>
+  /// <param name="body">The raw request body captured for diagnostics.</param>
+  /// <returns>The parsed webhook payload, or <c>null</c> when parsing fails.</returns>
+  private static async Task<WebhookCallbackPayload?> ParsePayloadAsync(HttpContext ctx, string body)
+  {
+    if (ctx.Request.HasFormContentType)
+    {
+      var form = await ctx.Request.ReadFormAsync();
+
+      return WebhookCallbackPayloadParser.ParseFormValues(
+        form.SelectMany(pair => pair.Value.Select(value => new KeyValuePair<string, string?>(pair.Key, value))));
+    }
+
+    return JsonSerializer.Deserialize<WebhookCallbackPayload>(body, Smtp2GoJsonDefaults.Options);
   }
 
   #endregion
