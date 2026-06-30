@@ -71,4 +71,21 @@ public interface ISmtp2GoClient
   /// <exception cref="Exceptions.Smtp2GoApiException">Thrown when the SMTP2GO API returns an error.</exception>
   /// <exception cref="HttpRequestException">Thrown when the HTTP request fails.</exception>
   Task<EmailSendResponse> SendEmailAsync(EmailSendRequest request, CancellationToken ct = default);
+
+  /// <summary>
+  ///   Sends a pre-built MIME message via the SMTP2GO <c>email/mime</c> endpoint.
+  /// </summary>
+  /// <param name="request">The request carrying the Base64-encoded MIME message.</param>
+  /// <param name="ct">The cancellation token.</param>
+  /// <returns>The send response containing success/failure counts and the assigned email id.</returns>
+  /// <remarks>
+  ///   <para>
+  ///     Unlike <see cref="SendEmailAsync" />, SMTP2GO sends the supplied MIME verbatim instead of reconstructing it
+  ///     from structured fields — preserving the caller's <c>Content-Type</c> (e.g. <c>multipart/alternative</c>) and
+  ///     <c>Message-ID</c>. The response envelope is identical to <c>email/send</c>.
+  ///   </para>
+  /// </remarks>
+  /// <exception cref="Exceptions.Smtp2GoApiException">Thrown when the SMTP2GO API returns an error.</exception>
+  /// <exception cref="HttpRequestException">Thrown when the HTTP request fails.</exception>
+  Task<EmailSendResponse> SendMimeAsync(EmailMimeRequest request, CancellationToken ct = default);
 }

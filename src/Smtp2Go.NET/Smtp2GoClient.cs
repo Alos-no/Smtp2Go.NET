@@ -33,6 +33,9 @@ internal sealed partial class Smtp2GoClient : Smtp2GoResource, ISmtp2GoClient
   /// <summary>API endpoint for sending emails.</summary>
   private const string EmailSendEndpoint = "email/send";
 
+  /// <summary>API endpoint for sending a pre-built (raw) MIME message.</summary>
+  private const string EmailMimeEndpoint = "email/mime";
+
   #endregion
 
 
@@ -121,6 +124,22 @@ internal sealed partial class Smtp2GoClient : Smtp2GoResource, ISmtp2GoClient
     return response;
   }
 
+
+  /// <inheritdoc />
+  public async Task<EmailSendResponse> SendMimeAsync(EmailMimeRequest request, CancellationToken ct = default)
+  {
+    ArgumentNullException.ThrowIfNull(request);
+
+    LogMimeSendStarted(request.MimeEmail?.Length ?? 0);
+
+    var response = await PostAsync<EmailMimeRequest, EmailSendResponse>(
+      EmailMimeEndpoint, request, ct).ConfigureAwait(false);
+
+    LogEmailSendCompleted(response.Data?.Succeeded ?? 0, response.Data?.Failed ?? 0);
+
+    return response;
+  }
+
   #endregion
 
 
@@ -133,6 +152,10 @@ internal sealed partial class Smtp2GoClient : Smtp2GoResource, ISmtp2GoClient
   [LoggerMessage(LoggingConstants.EventIds.EmailSendCompleted, LogLevel.Information,
     "Email send completed: {Succeeded} succeeded, {Failed} failed")]
   private partial void LogEmailSendCompleted(int succeeded, int failed);
+
+  [LoggerMessage(LoggingConstants.EventIds.MimeSendStarted, LogLevel.Information,
+    "Sending raw MIME email ({MimeLength} base64 chars)")]
+  private partial void LogMimeSendStarted(int mimeLength);
 
   #endregion
 }

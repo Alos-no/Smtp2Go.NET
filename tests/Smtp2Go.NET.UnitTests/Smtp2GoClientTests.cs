@@ -217,6 +217,106 @@ public sealed class Smtp2GoClientTests
   #endregion
 
 
+  #region SendMimeAsync
+
+  [Fact]
+  public async Task SendMimeAsync_WithValidRequest_ReturnsResponse()
+  {
+    // Arrange — email/mime returns the same envelope as email/send.
+    var responseJson = JsonSerializer.Serialize(new
+    {
+      request_id = "req-mime-123",
+      data = new
+      {
+        succeeded = 1,
+        failed = 0,
+        email_id = "mime-email-abc"
+      }
+    });
+
+    var (client, _, _) = CreateClient(
+      new HttpResponseMessage(HttpStatusCode.OK)
+      {
+        Content = new StringContent(responseJson, System.Text.Encoding.UTF8, "application/json")
+      });
+
+    var request = new EmailMimeRequest { MimeEmail = "TUlNRS1ib2R5" };
+
+    // Act
+    var response = await client.SendMimeAsync(request, TestContext.Current.CancellationToken);
+
+    // Assert
+    response.Should().NotBeNull();
+    response.RequestId.Should().Be("req-mime-123");
+    response.Data.Should().NotBeNull();
+    response.Data!.Succeeded.Should().Be(1);
+    response.Data.EmailId.Should().Be("mime-email-abc");
+  }
+
+
+  [Fact]
+  public async Task SendMimeAsync_PostsToEmailMimeEndpoint()
+  {
+    // Arrange
+    var (client, _, handler) = CreateClient();
+
+    // Act
+    await client.SendMimeAsync(
+      new EmailMimeRequest { MimeEmail = "TUlNRS1ib2R5" },
+      TestContext.Current.CancellationToken);
+
+    // Assert — the raw-MIME send must target email/mime, not email/send.
+    handler.LastRequest.Should().NotBeNull();
+    handler.LastRequest!.RequestUri!.AbsolutePath.Should().EndWith("/email/mime");
+  }
+
+
+  [Fact]
+  public async Task SendMimeAsync_WithNullRequest_ThrowsArgumentNullException()
+  {
+    // Arrange
+    var (client, _, _) = CreateClient();
+
+    // Act
+    var act = async () => await client.SendMimeAsync(null!);
+
+    // Assert
+    await act.Should().ThrowAsync<ArgumentNullException>();
+  }
+
+
+  [Fact]
+  public async Task SendMimeAsync_WithApiError_ThrowsSmtp2GoApiException()
+  {
+    // Arrange
+    var errorJson = JsonSerializer.Serialize(new
+    {
+      request_id = "req-mime-err",
+      data = new
+      {
+        error = "Endpoint permission denied",
+        error_code = "E_ApiResponseCodes.ENDPOINT_PERMISSION_DENIED"
+      }
+    });
+
+    var (client, _, _) = CreateClient(
+      new HttpResponseMessage(HttpStatusCode.BadRequest)
+      {
+        Content = new StringContent(errorJson, System.Text.Encoding.UTF8, "application/json")
+      });
+
+    // Act
+    var act = async () => await client.SendMimeAsync(new EmailMimeRequest { MimeEmail = "TUlNRQ==" });
+
+    // Assert
+    var ex = (await act.Should().ThrowAsync<Smtp2GoApiException>()).Which;
+    ex.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+    ex.ErrorMessage.Should().Be("Endpoint permission denied");
+  }
+
+  #endregion
+
+
   #region Statistics.GetEmailSummaryAsync
 
   [Fact]

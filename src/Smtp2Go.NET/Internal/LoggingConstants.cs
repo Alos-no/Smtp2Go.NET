@@ -77,6 +77,7 @@ internal static class LoggingConstants
     public const int EmailSendStarted = 100;
     public const int EmailSendCompleted = 101;
     public const int EmailSendFailed = 102;
+    public const int MimeSendStarted = 103;
     public const int EmailSummaryRequested = 110;
 
     // HTTP client events (200-299)
