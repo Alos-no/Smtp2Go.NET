@@ -1,7 +1,5 @@
 namespace Smtp2Go.NET.IntegrationTests.Webhooks;
 
-using System.Net.Http.Headers;
-using System.Text;
 using Fixtures;
 using Helpers;
 using Smtp2Go.NET.Models.Email;
@@ -34,23 +32,6 @@ using Smtp2Go.NET.Models.Webhooks;
 [Trait("Category", "Integration.Webhook")]
 public sealed class WebhookDeliveryIntegrationTests : IClassFixture<Smtp2GoLiveFixture>
 {
-  #region Constants & Statics
-
-  /// <summary>
-  ///   Arbitrary Basic Auth username for the webhook receiver.
-  ///   We define this when creating the webhook — it is NOT an external secret.
-  /// </summary>
-  private const string WebhookUsername = "test-webhook-user";
-
-  /// <summary>
-  ///   Arbitrary Basic Auth password for the webhook receiver.
-  ///   We define this when creating the webhook — it is NOT an external secret.
-  /// </summary>
-  private const string WebhookPassword = "test-webhook-pass";
-
-  #endregion
-
-
   #region Properties & Fields - Non-Public
 
   /// <summary>The live-configured client fixture.</summary>
@@ -141,7 +122,7 @@ public sealed class WebhookDeliveryIntegrationTests : IClassFixture<Smtp2GoLiveF
     }
     finally
     {
-      await CleanupWebhookAsync(webhookId, ct);
+      await WebhookPipelineHelper.CleanupWebhookAsync(_fixture.Client, webhookId, ct);
     }
   }
 
@@ -220,7 +201,7 @@ public sealed class WebhookDeliveryIntegrationTests : IClassFixture<Smtp2GoLiveF
     }
     finally
     {
-      await CleanupWebhookAsync(webhookId, ct);
+      await WebhookPipelineHelper.CleanupWebhookAsync(_fixture.Client, webhookId, ct);
     }
   }
 
@@ -230,77 +211,29 @@ public sealed class WebhookDeliveryIntegrationTests : IClassFixture<Smtp2GoLiveF
   #region Methods - Private
 
   /// <summary>
-  ///   Sets up the full webhook delivery pipeline: starts the local receiver, creates a
-  ///   Cloudflare Quick Tunnel, verifies POST reachability, and registers a webhook with SMTP2GO.
+  ///   Sets up the full webhook delivery pipeline: establishes a reachable tunnel-backed receiver
+  ///   URL (via <see cref="WebhookPipelineHelper"/>) and registers a webhook with SMTP2GO for the
+  ///   specified events.
   /// </summary>
-  /// <remarks>
-  ///   <para>
-  ///     This method consolidates the common setup sequence shared by all webhook delivery tests:
-  ///     <list type="number">
-  ///       <item>Start the local webhook receiver on a random port</item>
-  ///       <item>Create a Cloudflare Quick Tunnel to the receiver</item>
-  ///       <item>Wait for DNS propagation so the tunnel is reachable</item>
-  ///       <item>Verify the tunnel accepts POST requests (self-test through the tunnel)</item>
-  ///       <item>Clear self-test payloads to prevent interference with <c>WaitForPayloadAsync</c></item>
-  ///       <item>Build the webhook URL with Basic Auth credentials embedded (RFC 3986 userinfo)</item>
-  ///       <item>Register the webhook with SMTP2GO for the specified events</item>
-  ///     </list>
-  ///   </para>
-  /// </remarks>
   /// <param name="receiver">The webhook receiver fixture (must be freshly created, not yet started).</param>
   /// <param name="tunnel">The tunnel manager (must be freshly created, not yet started).</param>
   /// <param name="events">The subscription-level events to register the webhook for.</param>
   /// <param name="ct">Cancellation token.</param>
-  /// <returns>The SMTP2GO webhook ID for cleanup via <see cref="CleanupWebhookAsync"/>.</returns>
+  /// <returns>The SMTP2GO webhook ID for cleanup via <see cref="WebhookPipelineHelper.CleanupWebhookAsync"/>.</returns>
   private async Task<int> SetupWebhookPipelineAsync(
     WebhookReceiverFixture receiver,
     CloudflareTunnelManager tunnel,
     WebhookCreateEvent[] events,
     CancellationToken ct)
   {
-    // Step 1: Start the local webhook receiver.
-    await receiver.StartAsync(WebhookUsername, WebhookPassword);
+    // Stand up the local receiver behind a Cloudflare Quick Tunnel and get the reachable URL.
+    var webhookUrl = await WebhookPipelineHelper.EstablishReachableWebhookUrlAsync(receiver, tunnel);
 
-    // Step 2: Create a Cloudflare Quick Tunnel to the receiver.
-    var publicUrl = await tunnel.StartTunnelAsync(receiver.Port);
-
-    // Step 2b: Wait for the tunnel to become reachable via DNS propagation.
-    // Quick Tunnels need time for DNS records to propagate globally.
-    var healthUrl = $"{publicUrl}{WebhookReceiverFixture.HealthPath}";
-    var isReachable = await tunnel.WaitForTunnelReachableAsync(healthUrl);
-
-    if (!isReachable)
-      Assert.Fail($"Cloudflare tunnel {publicUrl} did not become reachable within 60 seconds (DNS propagation timeout).");
-
-    // Step 2c: Verify the tunnel accepts POST requests by sending a self-test POST
-    // through the tunnel. This confirms the full chain works for POST (not just GET).
-    // Cloudflare Quick Tunnels may have WAF/Bot protection that blocks POSTs from
-    // external services, so this step isolates tunnel-vs-SMTP2GO issues.
-    var webhookPathUrl = $"{publicUrl}{WebhookReceiverFixture.WebhookPath}";
-    await VerifyTunnelAcceptsPostAsync(webhookPathUrl);
-
-    // Clear the self-test payload so it doesn't interfere with WaitForPayloadAsync.
-    receiver.ClearReceivedPayloads();
-
-    // Build the webhook URL with Basic Auth credentials embedded in the URI.
-    // SMTP2GO requires credentials in the URL itself (RFC 3986 userinfo component),
-    // NOT as separate API fields. The webhook_username/webhook_password API fields
-    // are silently ignored — SMTP2GO extracts credentials from the URL and sends them
-    // as an Authorization: Basic header when delivering webhook callbacks.
-    var tunnelUri = new Uri(publicUrl);
-    var webhookUri = new UriBuilder(tunnelUri)
-    {
-      UserName = Uri.EscapeDataString(WebhookUsername),
-      Password = Uri.EscapeDataString(WebhookPassword),
-      Path = WebhookReceiverFixture.WebhookPath
-    };
-    var webhookUrl = webhookUri.Uri.AbsoluteUri;
-
-    // Step 3: Delete any stale webhooks from previous runs.
+    // Delete any stale webhooks from previous runs.
     // SMTP2GO free tier allows only 1 webhook — a stale webhook from a failed run blocks creation.
-    await DeleteAllExistingWebhooksAsync(ct);
+    await WebhookPipelineHelper.DeleteAllExistingWebhooksAsync(_fixture.Client, ct);
 
-    // Step 4: Register the webhook with SMTP2GO.
+    // Register the webhook with SMTP2GO for the requested events.
     var createRequest = new WebhookCreateRequest
     {
       WebhookUrl = webhookUrl,
@@ -319,56 +252,6 @@ public sealed class WebhookDeliveryIntegrationTests : IClassFixture<Smtp2GoLiveF
 
 
   /// <summary>
-  ///   Deletes all existing webhooks on the SMTP2GO account.
-  ///   SMTP2GO free tier limits accounts to 1 webhook — stale webhooks from
-  ///   previous failed runs block creation of new ones.
-  /// </summary>
-  private async Task DeleteAllExistingWebhooksAsync(CancellationToken ct)
-  {
-    var listResponse = await _fixture.Client.Webhooks.ListAsync(ct);
-
-    if (listResponse.Data is not { Length: > 0 })
-      return;
-
-    foreach (var webhook in listResponse.Data)
-    {
-      if (webhook.WebhookId is { } id)
-      {
-        try
-        {
-          await _fixture.Client.Webhooks.DeleteAsync(id, ct);
-        }
-        catch
-        {
-          // Best-effort cleanup — continue with remaining webhooks.
-        }
-      }
-    }
-  }
-
-
-  /// <summary>
-  ///   Best-effort webhook cleanup. Silently ignores errors to prevent masking test failures.
-  /// </summary>
-  /// <param name="webhookId">The webhook ID to delete, or <c>null</c> if no webhook was created.</param>
-  /// <param name="ct">Cancellation token.</param>
-  private async Task CleanupWebhookAsync(int? webhookId, CancellationToken ct)
-  {
-    if (webhookId == null)
-      return;
-
-    try
-    {
-      await _fixture.Client.Webhooks.DeleteAsync(webhookId.Value, ct);
-    }
-    catch
-    {
-      // Best-effort cleanup.
-    }
-  }
-
-
-  /// <summary>
   ///   Logs all received payloads and raw bodies for debugging failed webhook delivery tests.
   /// </summary>
   /// <param name="testName">A short label for the log prefix (e.g., <c>"HardBounceTest"</c>).</param>
@@ -379,43 +262,6 @@ public sealed class WebhookDeliveryIntegrationTests : IClassFixture<Smtp2GoLiveF
 
     foreach (var raw in receiver.RawBodies)
       Console.Error.WriteLine($"[{testName}] Raw body: {raw}");
-  }
-
-
-  /// <summary>
-  ///   Sends a test POST through the Cloudflare tunnel to verify that POST requests
-  ///   are proxied correctly. Uses the DoH-bypassing HTTP client to avoid DNS cache issues.
-  /// </summary>
-  /// <remarks>
-  ///   This self-test isolates tunnel configuration issues from SMTP2GO delivery issues.
-  ///   If this step fails, the tunnel does not support POSTs (e.g., Cloudflare WAF blocking).
-  ///   If this step succeeds but SMTP2GO never calls back, the issue is on SMTP2GO's side.
-  /// </remarks>
-  private static async Task VerifyTunnelAcceptsPostAsync(string webhookUrl)
-  {
-    using var client = CloudflareTunnelManager.CreateDnsBypassingHttpClient();
-
-    // Build a Basic Auth header matching the test credentials.
-    var authValue = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{WebhookUsername}:{WebhookPassword}"));
-    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", authValue);
-
-    // Send a minimal JSON POST body — the receiver will attempt to deserialize it.
-    var content = new StringContent(
-      """{"event": "test", "hostname": "self-test"}""",
-      Encoding.UTF8,
-      "application/json");
-
-    var response = await client.PostAsync(webhookUrl, content);
-
-    Console.Error.WriteLine($"[WebhookDeliveryTest] Self-POST verification: HTTP {(int)response.StatusCode}");
-
-    if (!response.IsSuccessStatusCode)
-    {
-      Assert.Fail(
-        $"Cloudflare tunnel does not accept POST requests. " +
-        $"Self-POST to {webhookUrl} returned HTTP {(int)response.StatusCode}. " +
-        $"This may indicate Cloudflare WAF/Bot protection is blocking POSTs.");
-    }
   }
 
   #endregion
