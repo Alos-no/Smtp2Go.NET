@@ -5,6 +5,13 @@ using Helpers;
 using Smtp2Go.NET.Models.Webhooks;
 
 /// <summary>
+///   Collection definition for webhook tests — ensures they run sequentially
+///   because SMTP2GO free tier limits the account to 1 webhook at a time.
+/// </summary>
+[CollectionDefinition("Webhook")]
+public class WebhookTestCollection;
+
+/// <summary>
 ///   Integration tests for webhook CRUD lifecycle operations using the live API key.
 /// </summary>
 /// <remarks>
@@ -12,16 +19,18 @@ using Smtp2Go.NET.Models.Webhooks;
 ///     These tests create, list, and delete real webhooks on the SMTP2GO account.
 ///     Each test cleans up after itself by deleting any webhooks it creates.
 ///   </para>
+///   <para>
+///     <strong>Reachable URL required.</strong> SMTP2GO validates that a webhook URL points to a
+///     reachable destination at <c>webhook/add</c> time (it rejects a fabricated URL with HTTP 400
+///     "The passed URL must point to a valid destination"), so these tests stand up a local receiver
+///     behind a Cloudflare Quick Tunnel (via <see cref="WebhookPipelineHelper"/>) to obtain a real
+///     URL. That makes them depend on <c>cloudflared</c>, so they carry the
+///     <c>Integration.Webhook</c> trait and are excluded from CI alongside the delivery tests
+///     (CI has no tunnel infrastructure); they run locally.
+///   </para>
 /// </remarks>
-/// <summary>
-///   Collection definition for webhook tests — ensures they run sequentially
-///   because SMTP2GO free tier limits the account to 1 webhook at a time.
-/// </summary>
-[CollectionDefinition("Webhook")]
-public class WebhookTestCollection;
-
 [Collection("Webhook")]
-[Trait("Category", "Integration.Live")]
+[Trait("Category", "Integration.Webhook")]
 public sealed class WebhookManagementIntegrationTests : IClassFixture<Smtp2GoLiveFixture>
 {
   #region Properties & Fields - Non-Public
@@ -45,59 +54,33 @@ public sealed class WebhookManagementIntegrationTests : IClassFixture<Smtp2GoLiv
   #endregion
 
 
-  #region Methods - Helpers
-
-  /// <summary>
-  ///   Deletes all existing webhooks on the SMTP2GO account.
-  ///   SMTP2GO free tier limits accounts to 1 webhook — stale webhooks from
-  ///   previous failed runs or E2E tests block creation of new ones.
-  /// </summary>
-  private async Task DeleteAllExistingWebhooksAsync(CancellationToken ct)
-  {
-    var listResponse = await _fixture.Client.Webhooks.ListAsync(ct);
-
-    if (listResponse.Data is not { Length: > 0 })
-      return;
-
-    foreach (var webhook in listResponse.Data)
-    {
-      if (webhook.WebhookId is { } id)
-      {
-        try
-        {
-          await _fixture.Client.Webhooks.DeleteAsync(id, ct);
-        }
-        catch
-        {
-          // Best-effort cleanup — continue with remaining webhooks.
-        }
-      }
-    }
-  }
-
-  #endregion
-
-
   #region Webhook Lifecycle
 
   [Fact]
   public async Task WebhookLifecycle_CreateListDelete_Succeeds()
   {
-    // Fail if live secrets are not configured.
+    // Fail if live secrets are not configured, or if cloudflared is unavailable for the tunnel.
     TestSecretValidator.AssertLiveSecretsPresent();
+    TestSecretValidator.AssertCloudflaredInstalled();
 
     var ct = TestContext.Current.CancellationToken;
     int? webhookId = null;
 
+    await using var receiver = new WebhookReceiverFixture();
+    await using var tunnel = new CloudflareTunnelManager();
+
+    // SMTP2GO requires a reachable destination, so create a real tunnel-backed receiver URL.
+    var webhookUrl = await WebhookPipelineHelper.EstablishReachableWebhookUrlAsync(receiver, tunnel);
+
     // SMTP2GO free tier allows only 1 webhook — clear stale webhooks from previous runs.
-    await DeleteAllExistingWebhooksAsync(ct);
+    await WebhookPipelineHelper.DeleteAllExistingWebhooksAsync(_fixture.Client, ct);
 
     try
     {
       // Step 1: Create a webhook.
       var createRequest = new WebhookCreateRequest
       {
-        WebhookUrl = $"https://webhook-test.example.com/smtp2go/{Guid.NewGuid():N}",
+        WebhookUrl = webhookUrl,
         Events = [WebhookCreateEvent.Delivered, WebhookCreateEvent.Bounce]
       };
 
@@ -145,17 +128,7 @@ public sealed class WebhookManagementIntegrationTests : IClassFixture<Smtp2GoLiv
     finally
     {
       // Cleanup: Delete the webhook if the test failed midway.
-      if (webhookId != null)
-      {
-        try
-        {
-          await _fixture.Client.Webhooks.DeleteAsync(webhookId.Value, ct);
-        }
-        catch
-        {
-          // Best-effort cleanup.
-        }
-      }
+      await WebhookPipelineHelper.CleanupWebhookAsync(_fixture.Client, webhookId, ct);
     }
   }
 
@@ -163,14 +136,21 @@ public sealed class WebhookManagementIntegrationTests : IClassFixture<Smtp2GoLiv
   [Fact]
   public async Task WebhookCreate_WithSpecificEvents_ConfiguresCorrectly()
   {
-    // Fail if live secrets are not configured.
+    // Fail if live secrets are not configured, or if cloudflared is unavailable for the tunnel.
     TestSecretValidator.AssertLiveSecretsPresent();
+    TestSecretValidator.AssertCloudflaredInstalled();
 
     var ct = TestContext.Current.CancellationToken;
     int? webhookId = null;
 
+    await using var receiver = new WebhookReceiverFixture();
+    await using var tunnel = new CloudflareTunnelManager();
+
+    // SMTP2GO requires a reachable destination, so create a real tunnel-backed receiver URL.
+    var webhookUrl = await WebhookPipelineHelper.EstablishReachableWebhookUrlAsync(receiver, tunnel);
+
     // SMTP2GO free tier allows only 1 webhook — clear stale webhooks from previous runs.
-    await DeleteAllExistingWebhooksAsync(ct);
+    await WebhookPipelineHelper.DeleteAllExistingWebhooksAsync(_fixture.Client, ct);
 
     try
     {
@@ -180,7 +160,7 @@ public sealed class WebhookManagementIntegrationTests : IClassFixture<Smtp2GoLiv
       // NOT callback payload events (e.g., "hard_bounced", "spam_complaint").
       var createRequest = new WebhookCreateRequest
       {
-        WebhookUrl = $"https://webhook-test.example.com/smtp2go/{Guid.NewGuid():N}",
+        WebhookUrl = webhookUrl,
         Events =
         [
           WebhookCreateEvent.Processed,
@@ -206,17 +186,7 @@ public sealed class WebhookManagementIntegrationTests : IClassFixture<Smtp2GoLiv
     finally
     {
       // Cleanup.
-      if (webhookId != null)
-      {
-        try
-        {
-          await _fixture.Client.Webhooks.DeleteAsync(webhookId.Value, ct);
-        }
-        catch
-        {
-          // Best-effort cleanup.
-        }
-      }
+      await WebhookPipelineHelper.CleanupWebhookAsync(_fixture.Client, webhookId, ct);
     }
   }
 

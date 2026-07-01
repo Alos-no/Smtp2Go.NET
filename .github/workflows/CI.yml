@@ -6,7 +6,9 @@
 # 3. Runs integration tests against the live SMTP2GO API (requires secrets)
 #
 # Tests run against .NET 10 (primary target framework).
-# Webhook delivery tests are excluded from CI because they require cloudflared.
+# Webhook tests (delivery + management) are excluded from CI because they require cloudflared:
+# SMTP2GO validates that a webhook URL points to a reachable destination, so even CRUD tests
+# need a real tunnel-backed endpoint.
 
 name: CI
 
@@ -64,7 +66,8 @@ jobs:
         run: ./tests/Smtp2Go.NET.UnitTests/bin/Debug/net10.0/Smtp2Go.NET.UnitTests
 
   # Run integration tests against the live SMTP2GO API.
-  # Webhook delivery tests are excluded because they require cloudflared (not available in CI).
+  # Webhook tests (delivery + management) are excluded because they require cloudflared (not available in CI):
+  # SMTP2GO now validates webhook-URL reachability, so even CRUD tests need a real tunnel-backed endpoint.
   # Sandbox and live API tests run with secrets configured as environment variables.
   integration-tests:
     needs: build
@@ -91,11 +94,11 @@ jobs:
         # upload-artifact/download-artifact strips POSIX execute bits.
         run: chmod +x ./tests/Smtp2Go.NET.IntegrationTests/bin/Debug/net10.0/Smtp2Go.NET.IntegrationTests
 
-      - name: Run integration tests (excluding webhook delivery)
-        # Exclude webhook delivery tests (require cloudflared + tunnel infrastructure).
+      - name: Run integration tests (excluding webhook tests)
+        # Exclude webhook tests — delivery AND management/CRUD (require cloudflared + tunnel infrastructure).
         # xUnit v3 uses -trait- (with trailing dash) to exclude tests by trait.
         # This excludes tests with [Trait("Category", "Integration.Webhook")].
-        # Sandbox, live API, and webhook management tests all run.
+        # Sandbox and live API (email/send, email/mime, stats) tests run.
         run: ./tests/Smtp2Go.NET.IntegrationTests/bin/Debug/net10.0/Smtp2Go.NET.IntegrationTests -trait- "Category=Integration.Webhook"
         env:
           # SMTP2GO API keys and test addresses — configured as GitHub repository secrets.
